@@ -3,9 +3,9 @@ import sys
 from time import time, gmtime, strftime
 from os.path import isdir, isfile, join
 from os import mkdir, remove, listdir
+import ConfigParser
 
 import twain
-import ConfigParser
 
 from Tkinter import *
 from tkMessageBox import askyesno, showinfo
@@ -14,54 +14,96 @@ from PIL import ImageTk, Image
 
 COUNT = 0
 ANGLE = 0
-PRECISEANGLE = 0
 
 class Twain:
 	def __init__(self, cfg='', onSelect=False):
 		self.cfg = cfg
 
+		## Call to dsm_entry, this will load twain32.dll or twain_dsm.dll
 		self.SourceManager = twain.SourceManager(0)	
+
 		sl = self.SourceManager.GetSourceList()
 		if not sl:
 			self.message = "Aucun scanner n'est reconnu sur le reseau"
 		else:
 			self.productName = self.getProductName(onSelect)
 
+	def setErrs(self, err, method=''):
+		self.message = """
+		Si vous rencontrez ce message, veuillez vous assurez de la bonne connection de votre peripherique.
+		- Debrancher/Rebrancher votre scanner.
+		- Selectionner a nouveau votre scanner depuis le menu 'Scanner -> Selectionner Source'
+
+		[file=pyscan.py, class=Twain, method=%s]
+		[%s]
+		"""%(method,err)
+
 	def getProductName(self, onSelect):
 		##	Check if source has been opened once from inifile
 		#	if not use selectSource to get twain.SourceManager.ProductName
 		if not hasSectionOrOption(self.cfg, needle='ProductName',option=True) or onSelect:
-			self.selectSource()
-			writeSetting(self.cfg, self.productName, section='SCANNER_INFO', option='ProductName')
-			name = self.Source.GetSourceName()
-			self.Source.destroy()
-			return name
+			if self.selectSource():
+
+				writeSetting(self.cfg, self.productName, section='SCANNER_INFO', option='ProductName')
+				name = self.Source.GetSourceName()
+				self.Source.destroy()
+				return name
+			else:
+				return ''
 		else:
 			return self.cfg.get('SCANNER_INFO', 'ProductName')
 
 	def selectSource(self):
 		##	Will be used once to get identity, then onSourceSelect
 		#	Get twain source object
-		self.Source = self.SourceManager.OpenSource()
+		try:
+			self.Source = self.SourceManager.OpenSource()
+		except Exception as e:
+			if "ConditionCode = 4" in e:
+				self.setErrs(e, 'selectSource')
+			else:
+				print(">>\n%s\n<<"%e)
+			return False
+		finally:
+			self.productName = self.Source.GetSourceName()
+			self.Source.destroy()
+			return True
 
-		# Get ProductName for later uses
-		self.productName = self.Source.GetSourceName()
-		self.Source.destroy()
-
-	def openSource(self):
-		if self.productName:
-			self.Source = self.SourceManager.OpenSource(self.productName)
-		else:
-			print('huh?')
+	def getInfo(self):
+		source = self.SourceManager.OpenSource(self.productName)
+		
+		cap_PIXELTYPE, value = source.get_capability_current(twain.ICAP_PIXELTYPE) 
+		message = "%s: %s %s"% ('PIXELTYPE', cap_PIXELTYPE, value)
+		
+		source.destroy()
+		self.SourceManager.destroy()
+		return (message)
 
 	def Acquire(self,filename):
-		self.Source = self.SourceManager.OpenSource(self.productName)
+		try:
+			self.Source = self.SourceManager.OpenSource(self.productName)
+		except Exception as e:
+			if "ConditionCode = 4" in e:
+				# Cancel Acquire !
+				self.setErrs(e, 'Acquire')
+			else:
+				print(">>\n%s\n<<"%e)
+			return False
+
+		# Set color or bw (BW only for now)
+		self.Source.SetCapability(twain.ICAP_PIXELTYPE, twain.TWTY_UINT16, twain.TWPT_BW)
+
+		# Set resolution 300 for now
+		self.Source.SetCapability(twain.ICAP_XRESOLUTION, twain.TWTY_FIX32, 300)
+		self.Source.SetCapability(twain.ICAP_YRESOLUTION, twain.TWTY_FIX32, 300)
+
 		self.Source.RequestAcquire(0,0)
 		self.Source.ModalLoop()
 		self.rv = self.Source.XferImageNatively()
 		if self.rv:
 			(self.handle, count) = self.rv
 		self.save(filename)
+		return True
 
 
 	def save(self, filename):
@@ -156,7 +198,7 @@ class App(Frame):
 		self.selectedItem = Label(self.master)
 
 		self.labelHelp = Label(self.master, text=
-			"N-Nouvelle Acquisition; A-Appliquer; S-Sauvegarder; Q-Quitter"
+			"<N> Nouvelle Acquisition; <A> Appliquer; <R> Retourner a gauche; <Shift-R> Retourner a droite; <Q> Quitter"
 			)
 
 		# -------------- MenuBar -------------- #
@@ -180,8 +222,14 @@ class App(Frame):
 			)
 		self.scanMenu.add_command(
 			label = "Nouvelle numerisation",
-			command = self.TwainAcquire
+			command = self.TwainAcquire,
+			state=(DISABLED if self.scannerName == '' else NORMAL)
 			)
+		# self.scanMenu.add_command(
+		# 	label = "About(Scanner)",
+		# 	command = self.showAbout,
+		# 	state=(DISABLED if self.scannerName == '' else NORMAL)
+		# 	)
 
 		self.menubar.add_cascade(label="Scanner", menu=self.scanMenu)
 
@@ -256,6 +304,9 @@ class App(Frame):
 		self.listbox.configure(height=COUNT+1)
 		self.listbox.update()
 
+	def updateSourceLabel(self, event=None):
+		if scannerName:
+			self.labelSourceName.configure(text=self.scannerName)
 
 	def toggleFullscreen(self, event=None):
 		self.state = not self.state
@@ -286,9 +337,16 @@ class App(Frame):
 
 		# ... :s
 		tw = Twain(cfg=self.cfg)
-		tw.Acquire('tmp/out_%d.png' % COUNT)
+		if tw.Acquire('tmp/out_%d.png' % COUNT):	
+			self.DisplayImage('tmp/out_%d.png' % COUNT)
+		else:
+			showinfo(title='error',message=tw.message)
 		del tw
-		self.DisplayImage('tmp/out_%d.png' % COUNT)
+
+	def showAbout(self):
+		tw = Twain(cfg=self.cfg)
+		message = tw.getInfo()
+		showinfo(title='About',message=message)
 
 
 	## --------------------- \Twain Related ---------------------- ##
@@ -325,7 +383,7 @@ class App(Frame):
 		self.img = ''
 		ANGLE = 0
 
-		# unBind and deactivate edit menu
+		# Unbind and deactivate edit menu
 		for i in range(0,5):
 			self.editMenu.entryconfig(i, state=DISABLED)		
 		if self.editBinded:

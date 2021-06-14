@@ -1,22 +1,21 @@
 # Scanner0.1
  
-#### Build
-
-### Deps
-
-- `pip install pytwain`
-- `pip install pillow`
-- `pip install -Iv cx_freeze=4.3.3`
-
+#### Debug
 ### Env
-## Debug, Tests
+Debug, Tests
 
 - `virtualenv -p python env`
 - `.\env\Scripts\activate`
+
+Deps
+
+- `pip install pytwain` (twain2.0, 2011 ! NOT 2017 !!!)
+- `pip install pillow`
+
+Run
+
 - `python pyscan.py`
 
-## Build
-This app has been built with CxFreeze
-(Powershell, cwd: {path}\src)
-- clear build dir `rm -Recurse ..\build\exe.win32-2.7`
-- `python setup.py build`
+### Issues
+
+Sometimes Tkinter can be badly installed so, you have to copy paste your tk8.5 into tcl8.5 from your python2.7 installation folder (/{'Python27 path'}/lib/)
