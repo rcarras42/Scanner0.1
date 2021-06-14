@@ -1,0 +1,3 @@
+pytwain
+pillow
+pyinstaller==3.0

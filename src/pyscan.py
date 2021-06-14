@@ -2,7 +2,7 @@
 import sys
 from time import time, gmtime, strftime
 from os.path import isdir, isfile, join
-from os import mkdir, remove, listdir
+from os import mkdir, remove, listdir, __file__
 import ConfigParser
 
 import twain
@@ -20,6 +20,7 @@ class Twain:
 		self.cfg = cfg
 
 		## Call to dsm_entry, this will load twain32.dll or twain_dsm.dll
+		
 		try:
 			self.SourceManager = twain.SourceManager(0)	
 		except Exception as e:
@@ -34,6 +35,7 @@ class Twain:
 			self.message = "Aucun scanner n'est reconnu sur le reseau"
 		else:
 			self.productName = self.getProductName(onSelect)
+			print(self.productName)
 		self.capPixelType = self.getPixelType()
 		self.capResolution = self.getResolution()
 
@@ -52,7 +54,6 @@ class Twain:
 		#	if not use selectSource to get twain.SourceManager.ProductName
 		if not hasSectionOrOption(self.cfg, needle='ProductName',option=True) or onSelect:
 			if self.selectSource():
-
 				writeSetting(self.cfg, self.productName, section='SCANNER_INFO', option='ProductName')
 				name = self.Source.GetSourceName()
 				self.Source.destroy()
@@ -74,7 +75,7 @@ class Twain:
 				print(">>\n%s\n<<"%e)
 			return False
 		finally:
-			if hasattr(self, 'productName'):
+			if hasattr(self, 'Source'):
 				self.productName = self.Source.GetSourceName()
 				self.Source.destroy()
 				return True
@@ -160,6 +161,7 @@ class App(Frame):
 
 	def __init__(self, cfg='', master=None):
 		Frame.__init__(self, master)
+		print(__file__)
 		self.errs = list()
 		self.master = master
 
@@ -542,8 +544,7 @@ def hasSectionOrOption(cfg, needle='', section=False,option=False):
 def hasWDReady():
 	errs = list()
 	# images will be used as return path for the app
-	dirs = ['tmp', 'images']
-
+	dirs = ['../tmp', '../images']	
 	for _dir in dirs:
 		if not isdir(_dir):
 			fn = '%s/init.png' % _dir
