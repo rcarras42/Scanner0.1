@@ -20,13 +20,22 @@ class Twain:
 		self.cfg = cfg
 
 		## Call to dsm_entry, this will load twain32.dll or twain_dsm.dll
-		self.SourceManager = twain.SourceManager(0)	
+		try:
+			self.SourceManager = twain.SourceManager(0)	
+		except Exception as e:
+			if 'dll' in e:
+				self.SourceManager.destroy()
+				self.SourceManager = twain.SourceManager(0)
+			else:
+				print(e)
 
 		sl = self.SourceManager.GetSourceList()
 		if not sl:
 			self.message = "Aucun scanner n'est reconnu sur le reseau"
 		else:
 			self.productName = self.getProductName(onSelect)
+		self.capPixelType = self.getPixelType()
+		self.capResolution = self.getResolution()
 
 	def setErrs(self, err, method=''):
 		self.message = """
@@ -65,9 +74,10 @@ class Twain:
 				print(">>\n%s\n<<"%e)
 			return False
 		finally:
-			self.productName = self.Source.GetSourceName()
-			self.Source.destroy()
-			return True
+			if hasattr(self, 'productName'):
+				self.productName = self.Source.GetSourceName()
+				self.Source.destroy()
+				return True
 
 	def getInfo(self):
 		source = self.SourceManager.OpenSource(self.productName)
@@ -78,6 +88,20 @@ class Twain:
 		source.destroy()
 		self.SourceManager.destroy()
 		return (message)
+
+	def getPixelType(self):
+		if hasSectionOrOption(self.cfg, needle='PIXELTYPE', option=True):
+			return self.cfg.get('SCANNER_INFO', 'PIXELTYPE')
+		else:
+			return 'bw'
+
+	def getResolution(self):
+		if hasSectionOrOption(self.cfg, needle='RESOLUTION', option=True):
+			return self.cfg.get('SCANNER_INFO', 'RESOLUTION')
+		else:		
+			default = 'good'	
+			writeSetting(self.cfg, default, 'SCANNER_INFO', 'RESOLUTION')
+			return default
 
 	def Acquire(self,filename):
 		try:
@@ -90,12 +114,26 @@ class Twain:
 				print(">>\n%s\n<<"%e)
 			return False
 
-		# Set color or bw (BW only for now)
-		self.Source.SetCapability(twain.ICAP_PIXELTYPE, twain.TWTY_UINT16, twain.TWPT_BW)
+		# Set color default: bw
+		pixelTypeMap = {
+		'bw': twain.TWPT_BW,
+		'grey': twain.TWPT_GRAY,
+		'color': twain.TWPT_RGB
+		}
+		pixelType = pixelTypeMap[self.capPixelType]
+		self.Source.SetCapability(twain.ICAP_PIXELTYPE, twain.TWTY_UINT16, pixelType)
 
-		# Set resolution 300 for now
-		self.Source.SetCapability(twain.ICAP_XRESOLUTION, twain.TWTY_FIX32, 300)
-		self.Source.SetCapability(twain.ICAP_YRESOLUTION, twain.TWTY_FIX32, 300)
+		# Set resolution default: 100
+		resolutionMap = {
+		'low': 50,
+		'good': 100,
+		'excellent': 150,
+		'fantastic': 200
+		}
+		print(self.capResolution)
+		resolution = resolutionMap[self.capResolution]
+		self.Source.SetCapability(twain.ICAP_XRESOLUTION, twain.TWTY_FIX32, resolution)
+		self.Source.SetCapability(twain.ICAP_YRESOLUTION, twain.TWTY_FIX32, resolution)
 
 		self.Source.RequestAcquire(0,0)
 		self.Source.ModalLoop()
@@ -233,6 +271,49 @@ class App(Frame):
 
 		self.menubar.add_cascade(label="Scanner", menu=self.scanMenu)
 
+		self.pixelTypeMenu = Menu(self.scanMenu, tearoff=0)
+		self.pixelTypeMenu.add_command(
+			label = "Noir et blanc",
+			command = lambda: self.setPixelType('bw'),
+			state=(DISABLED if self.scannerName == '' else NORMAL)
+			)
+		self.pixelTypeMenu.add_command(
+			label = "Gris",
+			command = lambda: self.setPixelType('grey'),
+			state=(DISABLED if self.scannerName == '' else NORMAL)
+			)
+		self.pixelTypeMenu.add_command(
+			label = "Couleur",
+			command = lambda: self.setPixelType('color'),
+			state=(DISABLED if self.scannerName == '' else NORMAL)
+			)
+
+		self.scanMenu.add_cascade(label="Mode de couleur", menu=self.pixelTypeMenu)		
+
+		self.resolutionMenu = Menu(self.scanMenu, tearoff=0)
+		self.resolutionMenu.add_command(
+			label = "Faible (50 dpi)",
+			command = lambda: self.setResolution('low'),
+			state=(DISABLED if self.scannerName == '' else NORMAL)
+			)
+		self.resolutionMenu.add_command(
+			label = "Bonne (100 dpi)",
+			command = lambda: self.setResolution('good'),
+			state=(DISABLED if self.scannerName == '' else NORMAL)
+			)
+		self.resolutionMenu.add_command(
+			label = "Excellente (150 dpi)",
+			command = lambda: self.setResolution('excellent'),
+			state=(DISABLED if self.scannerName == '' else NORMAL)
+			)
+		self.resolutionMenu.add_command(
+			label = "Fantastique (200dpi)",
+			command = lambda: self.setResolution('fantastic'),
+			state=(DISABLED if self.scannerName == '' else NORMAL)
+			)		
+
+		self.scanMenu.add_cascade(label="Resolution", menu=self.resolutionMenu)
+
 		self.editMenu = Menu(self.menubar, tearoff=0)
 		self.editMenu.add_command(
 			label = 'Appliquer',
@@ -330,6 +411,12 @@ class App(Frame):
 		del tw
 		return True if not self.scannerName == '' else False
 
+	def setPixelType(self, value):
+		writeSetting(self.cfg, value, 'SCANNER_INFO', 'PIXELTYPE')
+
+	def setResolution(self, value):
+		writeSetting(self.cfg, value, 'SCANNER_INFO', 'RESOLUTION')
+
 	def TwainAcquire(self, event=None):
 		# Empty canvas
 		if hasattr(self, '_imgHolder'):
@@ -346,6 +433,7 @@ class App(Frame):
 	def showAbout(self):
 		tw = Twain(cfg=self.cfg)
 		message = tw.getInfo()
+		del tw
 		showinfo(title='About',message=message)
 
 
@@ -417,8 +505,7 @@ class App(Frame):
 	def delImage(self, event=None):
 		if hasattr(self._imgHolder, 'image'):
 			if not self._imgHolder.image == '':
-				ans = askyesno(title='Supprimer Image', message="Etes vous sure de vouloir supprimer l'image ?")
-				if ans:
+				if askyesno(title='Supprimer Image', message="Etes vous sure de vouloir supprimer l'image ?"):				 
 					remove(self.img)
 					# Get id of our object in the listbox to delete it
 					# BUT NOT from listbox.getindex() or such
@@ -447,12 +534,9 @@ def hasSectionOrOption(cfg, needle='', section=False,option=False):
 	if section:
 		return (True if cfg.has_section(needle) else False)
 	elif option:
-		res = False
 		for sec in cfg.sections():
 			if cfg.has_option(sec, needle):
-				res = True
-		return res
-	else:
+				return True
 		return False
 
 def hasWDReady():
